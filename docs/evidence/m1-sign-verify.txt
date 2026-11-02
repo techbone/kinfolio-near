@@ -1,0 +1,15 @@
+# M1 evidence: MPC-signed BTC spend, verified offline (2026-11-02)
+
+Contract:        app.kinfolio-musa.testnet (NEAR testnet), MPC signer v1.signer-prod.testnet v3.18.0
+Create trust tx: AcRd2aM8jBFQbhjbyxRNPUyzfpm7mMbe6GbGtFLh9UiW  (trust 0, derived keys returned by the signer)
+Sign tx:         sPxnvNrETY7bkW9RSygsqrzFeFeink9mSTLoXXTkXu4   (owner_sign_btc -> sign -> on_btc_signed)
+Trust BTC addr:  tb1qnfw5scvgu0z3z77c0tukpaclnnpg42hdzw3ffh
+Trust EVM addr:  0x56129f3b6ee49426de1d83376fbb0d91dedbf74d
+
+The spend used a synthetic input (value 100000 sats, not broadcast); the point is the signature.
+
+$ cargo run --example verify_signed -- <raw_hex> 100000
+input 0: signature VERIFIES against 02ef7e18d794e7527bdcabda5249b9653a8e7902f0dc1b368f0882d95b5f19cd5c
+input 0: key hashes to program 9a5d486188e3c5117bd87af960f71f9cc28aaaed
+input 0: change pays back to the signing key: true
+txid 4f68ed09de20aa76493179f98e4d6df198a09728411301b412949a94561513c5
