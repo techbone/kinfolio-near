@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #fbfaf7;
+  --surface: #ffffff;
+  --border: #e7e4dc;
+  --text: #1b1c1a;
+  --muted: #6b6c66;
+  --accent: #1f5e46;
+  --accent-fg: #ffffff;
+  --warn: #a15c07;
+  --danger: #9b2c2c;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e0f0e;
+    --surface: #161816;
+    --border: #262926;
+    --text: #ecede9;
+    --muted: #8e918a;
+    --accent: #5fb38d;
+    --accent-fg: #0e0f0e;
+    --warn: #e0a13a;
+    --danger: #e07070;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-inter);
+  --font-display: var(--font-newsreader);
+  --font-mono: var(--font-jetbrains);
+  --radius-control: 6px;
+  --radius-card: 10px;
+}
+
+html {
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  font-family: var(--font-inter), system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  font-feature-settings: "tnum", "cv11";
+}
+
+.num {
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
