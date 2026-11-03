@@ -1,12 +1,12 @@
 # Kinfolio on NEAR
 
-<!-- badges: tests-N passing · rails-NEAR testnet + Chain Signatures · live-<url> -->
+<!-- badges: tests-N passing · rails-NEAR testnet + Chain Signatures · live-kinfolio-near.vercel.app -->
 
 ### Your keys outlive you, and no company ever holds them.
 
 Kinfolio is a family trust for self-custodied crypto. A NEAR contract holds native BTC and ETH through Chain Signatures. If the owner stops spending, heirs can start a claim, and the owner can veto it. After the challenge window, the contract itself signs the payouts.
 
-**Watch the demo** · **Live app** · [Verify it yourself](#verify-it-yourself-in-60-seconds) · [Architecture](ARCHITECTURE.md) · [Run it locally](#run-it-locally)
+**Watch the demo** · [Live app](https://kinfolio-near.vercel.app) · [Verify it yourself](#verify-it-yourself-in-60-seconds) · [Architecture](ARCHITECTURE.md) · [Run it locally](#run-it-locally)
 
 ## Demo
 
