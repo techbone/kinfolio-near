@@ -1,0 +1,17 @@
+M1 real-rails spend, 2026-11-03
+
+Trust 0 on app.kinfolio-musa.testnet, owner kinfolio-musa.testnet
+Trust BTC address (derived by v1.signer-prod.testnet, path trust-0, predecessor = contract):
+  tb1qnfw5scvgu0z3z77c0tukpaclnnpg42hdzw3ffh
+
+1. Faucet deposit (Bitcoin testnet4): e3fd93229b3698c80ec99ab3d736b0a00235bcf1dfb1d90dcd5d4379f0833f98:1, 50000 sats
+2. NEAR tx owner_sign_btc: 19B76jCtT29gGuKeTX5tvZiyforTVS1Zkwm2zK3ELHh
+   args: utxos=[that output], to=trust address, amount_sats=1000, fee_sats=300
+   contract built the tx, called v1.signer-prod.testnet.sign once, callback assembled the witness
+   event: {"standard":"kinfolio","event":"btc_signed","data":{"id":0,"txid":"6c33...a2e3","reason":"owner_spend"}}
+3. Broadcast to testnet4 (accepted by mempool.space):
+   6c3351a45d7038ead121a74d28a22b0855349e83f674b2bd2e0b74505c20a2e3, fee 300 sats
+   https://mempool.space/testnet4/tx/6c3351a45d7038ead121a74d28a22b0855349e83f674b2bd2e0b74505c20a2e3
+4. Heartbeat on-chain: last_heartbeat_secs 1793610858 -> 1793714294
+
+Note: the input was still unconfirmed when spent; the network relayed the child tx.

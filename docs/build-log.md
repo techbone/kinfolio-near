@@ -22,3 +22,9 @@ Each time the rails or our code surprise us: the dead end, the path chosen and t
 - **Reads go straight to NEAR RPC (`call_function`), no wallet needed**, so the demo trust is judgeable without connecting anything. The wallet is only for actions, via `@hot-labs/near-connect` (`signAndSendTransaction` with `FunctionCall` actions).
 - **Don't trust a cross-origin iframe for responsive screenshots.** A file:// page framing localhost blocks storage, so the app never hydrates and looks stuck on its skeleton. Same-origin framing showed the real 390px layout. A stale `next start` also survived `pkill -f`; kill by port.
 - **Spend flow ends on the source of truth.** Named steps: pick UTXOs and fee, contract builds and MPC signs (polls `get_last_signed` until `signed_at_secs` advances), broadcast, seen on mempool.space. Dust change is folded into the fee client-side because the contract rejects it.
+
+## M1 real spend on testnet4
+
+- Result: contract-built P2WPKH tx signed by the MPC network was accepted by the Bitcoin testnet4 mempool, and the trust heartbeat reset. Evidence: `docs/evidence/m1-real-spend.txt`.
+- Surprise: `near` is only in `~/.cargo/bin`, and the signer needs a generous gas budget (200 Tgas attached; 50 for sign plus 30 for the callback are reserved inside).
+- Guard: `examples/verify_signed.rs` checks the same signature offline; the real broadcast is the live check.
