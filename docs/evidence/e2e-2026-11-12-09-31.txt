@@ -1,0 +1,39 @@
+== Setup
+   contract app.kinfolio-musa.testnet
+   owner kinfolio-musa.testnet
+   heirs heir-a.kinfolio-musa.testnet (60%), heir-b.kinfolio-musa.testnet (40%)
+   started 2026-11-12T09:31:43.139Z
+
+== 1. create_trust
+   trust 2
+   BTC tb1qk8few3td37vsdzqlt56rp460zff3sn6knrkzca
+   EVM 0xf6192c4865ee92dbf40d8a77ae50ad22a562c338
+   inactivity 20s, challenge 15s
+
+== 2. fund BTC
+   owner_sign_btc on trust 0 -> 12000 sats
+   https://mempool.space/testnet4/tx/6bbaad44ec1e4f9bea160a7b0141d1946526824625c9f83e500d27e49003f4b3
+
+== 3. fund ETH
+   SKIPPED: splitter not set or no deployer key; EVM payout will not run
+
+== 4. start_claim
+   heir-a.kinfolio-musa.testnet started a claim
+   state Challenge, finalizable after 2026-11-12T09:33:40.000Z
+
+== 5. finalize
+   state Released
+
+== 6. distribute_btc
+   inputs 12000 sats, fee 341
+   heir-a.kinfolio-musa.testnet <- 6995 sats (tb1qxm0e9swapwyfh7mz6klfgdcejg0u7fpfx6uggj)
+   heir-b.kinfolio-musa.testnet <- 4664 sats (tb1q6vu0wmjejgmz56nwqnwfm4v2qp7crytrmskqkz)
+   https://mempool.space/testnet4/tx/8d85197867466ea0ab36fa01ce1575d7399b0dca741d0190b11341c0dc73e0b8
+
+== 7. distribute_evm
+   SKIPPED (see step 3)
+
+== Done
+   trust 2 released and paid out
+   NEAR account: https://explorer.testnet.near.org/accounts/app.kinfolio-musa.testnet
+   took 220s

@@ -28,3 +28,12 @@ Each time the rails or our code surprise us: the dead end, the path chosen and t
 - Result: contract-built P2WPKH tx signed by the MPC network was accepted by the Bitcoin testnet4 mempool, and the trust heartbeat reset. Evidence: `docs/evidence/m1-real-spend.txt`.
 - Surprise: `near` is only in `~/.cargo/bin`, and the signer needs a generous gas budget (200 Tgas attached; 50 for sign plus 30 for the callback are reserved inside).
 - Guard: `examples/verify_signed.rs` checks the same signature offline; the real broadcast is the live check.
+
+## M2 distribution (12 Nov)
+
+- `distribute_btc`: anyone may call it once a trust is Released; the contract builds one output per heir from its own heir list (`bps x (inputs - fee)`, remainder to the last heir) and signs one input per MPC call. Guards: `btc_distribution_needs_every_heir_address`, `btc_distribution_refuses_dust_shares`, `cannot_distribute_while_owner_is_alive`.
+- `distribute_evm`: hand-rolled RLP + ABI + EIP-1559 (keeps wasm at 280 KB instead of pulling in an EVM crate). Guard: `signed_tx_matches_foundry_byte_for_byte` compares our bytes with `cast mktx`, and `sighash_recovers_to_the_signing_key` recovers the signer.
+- Surprise: Ethereum rejects high-S signatures, and flipping S to N-S also flips the recovery parity. `on_evm_signed` normalises both.
+- Surprise: adding fields to the borsh state struct would break the deployed contract. The splitter address and EVM signatures live under raw storage keys instead, so the redeploy kept trust 0 and its coins.
+- Surprise: mempool.space was unreachable from the build machine for hours. The BTC helpers now fall back to Blockstream's testnet4 Esplora (`/fee-estimates` instead of `/v1/fees/recommended`).
+- Evidence: `docs/evidence/e2e-2026-11-12-09-31.txt` (BTC half; EVM half waits on Base Sepolia ETH).

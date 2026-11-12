@@ -1,6 +1,7 @@
 export const CONTRACT_ID = process.env.NEXT_PUBLIC_KINFOLIO_CONTRACT ?? "app.kinfolio-musa.testnet";
 export const NEAR_RPC = process.env.NEXT_PUBLIC_NEAR_RPC ?? "https://rpc.testnet.near.org";
 export const MEMPOOL_API = process.env.NEXT_PUBLIC_BTC_MEMPOOL_API ?? "https://mempool.space/testnet4/api";
+export const MEMPOOL_FALLBACK_API = "https://blockstream.info/testnet4/api";
 export const MEMPOOL_WEB = MEMPOOL_API.replace(/\/api$/, "");
 export const BASE_RPC = process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC ?? "https://sepolia.base.org";
 export const NEAR_EXPLORER = "https://explorer.testnet.near.org";

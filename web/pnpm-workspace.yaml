@@ -2,3 +2,5 @@ allowBuilds:
   sharp: false
   unrs-resolver: false
   secp256k1: false
+minimumReleaseAgeExclude:
+  - near-api-js@7.5.3

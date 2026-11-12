@@ -1,4 +1,4 @@
-import { MEMPOOL_API } from "./config";
+import { MEMPOOL_API, MEMPOOL_FALLBACK_API } from "./config";
 
 export interface Utxo {
   txid: string;
@@ -7,11 +7,29 @@ export interface Utxo {
   status: { confirmed: boolean };
 }
 
+/** Esplora-compatible APIs, tried in order: mempool.space, then Blockstream if it's unreachable. */
+const APIS = [MEMPOOL_API, MEMPOOL_FALLBACK_API];
+
+async function esplora(path: string, init?: RequestInit): Promise<Response> {
+  let lastError: unknown;
+  for (const base of APIS) {
+    try {
+      return await fetch(`${base}${path}`, { ...init, signal: AbortSignal.timeout(10_000) });
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError;
+}
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${MEMPOOL_API}${path}`);
-  if (!res.ok) throw new Error(`mempool.space ${res.status}: ${await res.text()}`);
+  const res = await esplora(path);
+  if (!res.ok) throw new Error(`esplora ${res.status}: ${await res.text()}`);
   return (await res.json()) as T;
 }
+
+export const fetchTx = (txid: string) =>
+  get<{ vout: { scriptpubkey_address: string; value: number }[] }>(`/tx/${txid}`);
 
 export const fetchUtxos = (address: string) => get<Utxo[]>(`/address/${address}/utxo`);
 
@@ -27,19 +45,23 @@ export async function fetchBalance(address: string): Promise<{ confirmed: number
 }
 
 export async function feeRate(): Promise<number> {
-  const f = await get<{ hourFee: number }>(`/v1/fees/recommended`);
-  return Math.max(1, f.hourFee);
+  const f = await get<{ hourFee: number }>(`/v1/fees/recommended`).catch(() => null);
+  if (f) return Math.max(1, f.hourFee);
+  // Blockstream exposes Esplora's /fee-estimates (sat/vB by confirmation target) instead.
+  const est = await get<Record<string, number>>(`/fee-estimates`).catch(() => ({}) as Record<string, number>);
+  return Math.max(1, Math.ceil(est["6"] ?? 1));
 }
 
 export async function broadcast(rawHex: string): Promise<string> {
-  const res = await fetch(`${MEMPOOL_API}/tx`, { method: "POST", body: rawHex });
+  const res = await esplora(`/tx`, { method: "POST", body: rawHex });
   const text = await res.text();
   if (!res.ok) throw new Error(`broadcast rejected: ${text}`);
   return text.trim();
 }
 
 export async function confirmations(txid: string): Promise<{ seen: boolean; confirmed: boolean }> {
-  const res = await fetch(`${MEMPOOL_API}/tx/${txid}/status`);
+  const res = await esplora(`/tx/${txid}/status`).catch(() => null);
+  if (!res) return { seen: false, confirmed: false };
   if (!res.ok) return { seen: false, confirmed: false };
   const s = (await res.json()) as { confirmed: boolean };
   return { seen: true, confirmed: s.confirmed };
