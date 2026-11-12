@@ -7,4 +7,6 @@ export const BASE_RPC = process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC ?? "https://sep
 export const NEAR_EXPLORER = "https://explorer.testnet.near.org";
 export const BASESCAN = "https://sepolia.basescan.org";
 export const DEMO_TRUST_ID = Number(process.env.NEXT_PUBLIC_DEMO_TRUST_ID ?? 0);
+/** Trust 4: created, lapsed, claimed, released and paid on both chains by `npm run e2e` (12 Nov 2026). */
+export const RELEASED_TRUST_ID = Number(process.env.NEXT_PUBLIC_RELEASED_TRUST_ID ?? 4);
 export const TGAS = (n: number) => String(n * 1_000_000_000_000);

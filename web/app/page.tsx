@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { CreateTrust } from "@/components/create-trust";
 import { MyTrusts } from "@/components/my-trusts";
-import { DEMO_TRUST_ID } from "@/lib/config";
+import { DEMO_TRUST_ID, RELEASED_TRUST_ID } from "@/lib/config";
 
 const HOW = [
   ["Create", "Name your heirs and their shares. The NEAR MPC network derives Bitcoin and EVM addresses that only this contract can sign for."],
@@ -27,8 +27,14 @@ export default function Home() {
         </div>
         <div className="flex flex-wrap gap-3 md:justify-end md:pb-1">
           <Link
-            href={`/trust/${DEMO_TRUST_ID}`}
+            href={`/trust/${RELEASED_TRUST_ID}`}
             className="inline-flex h-9 items-center rounded-control border border-border px-4 text-sm font-medium hover:bg-surface"
+          >
+            See a trust that paid out
+          </Link>
+          <Link
+            href={`/trust/${DEMO_TRUST_ID}`}
+            className="inline-flex h-9 items-center rounded-control bg-accent px-4 text-sm font-medium text-accent-fg hover:opacity-90"
           >
             Open the live demo trust
           </Link>
