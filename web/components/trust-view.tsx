@@ -5,9 +5,10 @@ import { AlertTriangle } from "lucide-react";
 import { BASESCAN, BASE_RPC, MEMPOOL_WEB, NEAR_EXPLORER } from "@/lib/config";
 import * as btcApi from "@/lib/btc";
 import { btc, eth, pct, sats } from "@/lib/format";
-import { getLastSigned, getTrust } from "@/lib/near";
+import { getLastSigned, getLastSignedEvm, getTrust } from "@/lib/near";
 import { useNow } from "@/lib/use-now";
 import type { SignedTx, Trust } from "@/lib/types";
+import { Distribute, SetPayout } from "./release";
 import { Timeline } from "./timeline";
 import { Button, Card, Field, Mono, Steps, inputClass, type Step } from "./ui";
 import { useWallet } from "./wallet";
@@ -38,7 +39,7 @@ function useTrust(id: number) {
 
 export function TrustView({ id }: { id: number }) {
   const { trust, error, refresh } = useTrust(id);
-  const { accountId } = useWallet();
+  const { accountId, connect } = useWallet();
 
   if (error && trust === undefined) {
     return (
@@ -80,7 +81,12 @@ export function TrustView({ id }: { id: number }) {
         <Heirs trust={trust} accountId={accountId} />
       </div>
 
-      <Actions trust={trust} isOwner={isOwner} isHeir={isHeir} refresh={refresh} />
+      {trust.state === "Released" && trust.btc_address ? (
+        <Distribute trust={trust} accountId={accountId} connect={connect} />
+      ) : (
+        <Actions trust={trust} isOwner={isOwner} isHeir={isHeir} refresh={refresh} />
+      )}
+      {isHeir && <SetPayout trust={trust} accountId={accountId!} refresh={refresh} />}
       {isOwner && trust.state === "Active" && trust.btc_address && <SpendBtc trust={trust} refresh={refresh} />}
       <LastSigned id={trust.id} />
     </div>
@@ -167,8 +173,9 @@ function Heirs({ trust, accountId }: { trust: Trust; accountId: string | null })
               <td className="py-2">
                 <span className="num text-[13px]">{h.account}</span>
                 {accountId === h.account && <span className="ml-2 text-xs text-accent">you</span>}
-                <div className="mt-0.5 text-xs text-muted">
-                  {h.btc_address || h.evm_address ? "Payout address set" : "No payout address yet"}
+                <div className="mt-1 space-y-0.5 text-xs text-muted">
+                  {h.btc_address ? <div>BTC <Mono value={h.btc_address} href={`${MEMPOOL_WEB}/address/${h.btc_address}`} /></div> : <div>BTC payout not set</div>}
+                  {h.evm_address ? <div>ETH <Mono value={h.evm_address} href={`${BASESCAN}/address/${h.evm_address}`} /></div> : <div>ETH payout not set</div>}
                 </div>
               </td>
               <td className="num py-2 text-right">{pct(h.bps)}</td>
@@ -387,10 +394,13 @@ function SpendBtc({ trust, refresh }: { trust: Trust; refresh: () => Promise<voi
 }
 
 function LastSigned({ id }: { id: number }) {
-  const [signed, setSigned] = useState<SignedTx | null>(null);
+  const [signed, setSigned] = useState<{ btc: SignedTx | null; evm: SignedTx | null }>({ btc: null, evm: null });
   useEffect(() => {
     let live = true;
-    const load = () => getLastSigned(id).then((s) => live && setSigned(s)).catch(() => {});
+    const load = () =>
+      Promise.all([getLastSigned(id), getLastSignedEvm(id)])
+        .then(([btc, evm]) => live && setSigned({ btc, evm }))
+        .catch(() => {});
     load();
     const t = setInterval(load, POLL_MS * 2);
     return () => {
@@ -398,19 +408,33 @@ function LastSigned({ id }: { id: number }) {
       clearInterval(t);
     };
   }, [id]);
-  if (!signed) return null;
+  const rows = [
+    signed.btc && { chain: "Bitcoin testnet4", tx: signed.btc, href: `${MEMPOOL_WEB}/tx/${signed.btc.txid}` },
+    signed.evm && { chain: "Base Sepolia", tx: signed.evm, href: `${BASESCAN}/tx/${signed.evm.txid}` },
+  ].filter((r) => !!r);
+  if (!rows.length) return null;
   return (
-    <Card title="Last transaction signed by this trust">
-      <dl className="grid gap-2 sm:grid-cols-[120px_1fr]">
-        <dt className="text-muted">Chain</dt>
-        <dd className="num">{signed.chain}</dd>
-        <dt className="text-muted">Txid</dt>
-        <dd>
-          <Mono value={signed.txid} href={`${MEMPOOL_WEB}/tx/${signed.txid}`} />
-        </dd>
-        <dt className="text-muted">Signed at</dt>
-        <dd className="num">{new Date(signed.signed_at_secs * 1000).toISOString().replace("T", " ").slice(0, 19)} UTC</dd>
-      </dl>
+    <Card title="Last transactions signed by this trust">
+      <table className="w-full text-left">
+        <thead className="text-xs text-muted">
+          <tr>
+            <th className="pb-2 font-normal">Chain</th>
+            <th className="pb-2 font-normal">Transaction</th>
+            <th className="pb-2 text-right font-normal">Signed (UTC)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.chain} className="border-t border-border">
+              <td className="py-2">{r.chain}</td>
+              <td className="py-2">
+                <Mono value={r.tx.txid} href={r.href} />
+              </td>
+              <td className="num py-2 text-right text-[13px]">{new Date(r.tx.signed_at_secs * 1000).toISOString().replace("T", " ").slice(0, 19)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </Card>
   );
 }

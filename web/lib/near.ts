@@ -35,3 +35,4 @@ export async function txStatus(txHash: string, signer: string): Promise<{ ok: bo
   if (res.status.Failure) return { ok: false, failure: JSON.stringify(res.status.Failure) };
   return { ok: true };
 }
+export const getLastSignedEvm = (id: number) => view<SignedTx | null>("get_last_signed_evm", { id });

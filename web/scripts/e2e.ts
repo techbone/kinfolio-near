@@ -16,7 +16,8 @@ import path from "node:path";
 import { Account } from "near-api-js";
 import { BASE_RPC, BASESCAN, CONTRACT_ID, MEMPOOL_WEB, NEAR_EXPLORER, NEAR_RPC } from "../lib/config";
 import { getTrust, view } from "../lib/near";
-import { broadcast, evmBalanceWei, feeRate, fetchTx, fetchUtxos, selectUtxos, vsize } from "../lib/btc";
+import { broadcast, feeRate, fetchTx, fetchUtxos, selectUtxos, vsize } from "../lib/btc";
+import * as evm from "../lib/evm";
 import type { SignedTx } from "../lib/types";
 
 const ROOT = path.resolve(__dirname, "../..");
@@ -30,8 +31,6 @@ const FUND_SATS = 12_000;
 const FUND_WEI = BigInt(env.E2E_FUND_WEI ?? "2000000000000000"); // 0.002 ETH
 const INACTIVITY_SECS = 20;
 const CHALLENGE_SECS = 15;
-/** OP-stack GasPriceOracle predeploy; `getL1FeeUpperBound(uint256)` is selector 0xf1c7a58b. */
-const L1_FEE_ORACLE = "0x420000000000000000000000000000000000000F";
 const GAS_300 =300_000_000_000_000n;
 const GAS_100 = 100_000_000_000_000n;
 
@@ -123,30 +122,16 @@ async function main() {
   // 7. ETH payout through KinfolioSplitter.
   if (evmReady) {
     const evmAddr = trust.evm_address!;
-    const balance = await waitFor("ETH arrived", async () => {
-      const b = await evmBalanceWei(BASE_RPC, evmAddr);
-      return b > 0n ? b : null;
-    });
-    const nonce = Number(BigInt(await evmRpc<string>("eth_getTransactionCount", [evmAddr, "pending"])));
-    const base = BigInt((await evmRpc<{ baseFeePerGas: string }>("eth_getBlockByNumber", ["latest", false])).baseFeePerGas);
-    const prio = 1_000_000n; // 0.001 gwei
-    const maxFee = base * 2n + prio;
-    const gasLimit = 120_000n;
-    // Base is an OP-stack L2: on top of L2 gas, every tx pays an L1 data fee. Reserve the oracle's
-    // upper bound for a generously sized tx so the balance check passes.
-    const l1Fee = BigInt(await evmRpc<string>("eth_call", [{ to: L1_FEE_ORACLE, data: `0xf1c7a58b${(800).toString(16).padStart(64, "0")}` }, "latest"]));
-    const value = balance - gasLimit * maxFee - l1Fee;
-    const before = [await evmBalanceWei(BASE_RPC, must("E2E_HEIR_A_EVM")), await evmBalanceWei(BASE_RPC, must("E2E_HEIR_B_EVM"))];
-    const signed = await call<SignedTx>(
-      heirA,
-      "distribute_evm",
-      { id, nonce, max_fee_per_gas: maxFee.toString(), max_priority_fee_per_gas: prio.toString(), gas_limit: Number(gasLimit), value_wei: value.toString() },
-      GAS_100,
-    );
-    const hash = await evmRpc<string>("eth_sendRawTransaction", [signed.raw_hex]);
-    const receipt = await waitFor("EVM receipt", () => evmRpc<{ status: string } | null>("eth_getTransactionReceipt", [hash]));
-    if (receipt.status !== "0x1") throw new Error(`EVM payout reverted: ${hash}`);
-    const after = [await evmBalanceWei(BASE_RPC, must("E2E_HEIR_A_EVM")), await evmBalanceWei(BASE_RPC, must("E2E_HEIR_B_EVM"))];
+    await waitFor("ETH arrived", async () => ((await evm.balanceWei(evmAddr)) > 0n ? true : null));
+    const params = await evm.payoutParams(evmAddr);
+    if (!params) throw new Error("trust ETH balance does not cover gas");
+    const before = [await evm.balanceWei(must("E2E_HEIR_A_EVM")), await evm.balanceWei(must("E2E_HEIR_B_EVM"))];
+    const signed = await call<SignedTx>(heirA, "distribute_evm", { id, ...params }, GAS_100);
+    const hash = await evm.sendRaw(signed.raw_hex);
+    const rcpt = await waitFor("EVM receipt", () => evm.receipt(hash));
+    if (rcpt.status !== "0x1") throw new Error(`EVM payout reverted: ${hash}`);
+    const after = [await evm.balanceWei(must("E2E_HEIR_A_EVM")), await evm.balanceWei(must("E2E_HEIR_B_EVM"))];
+    const value = params.value_wei;
     step(
       "7. distribute_evm",
       `value ${value} wei through splitter ${splitter}`,
@@ -192,16 +177,6 @@ function cast(args: string[]): string {
   return execFileSync(path.join(os.homedir(), ".foundry/bin/cast"), args, { encoding: "utf8" });
 }
 
-async function evmRpc<T>(method: string, params: unknown[]): Promise<T> {
-  const res = await fetch(BASE_RPC, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-  const body = await res.json();
-  if (body.error) throw new Error(`${method}: ${body.error.message}`);
-  return body.result as T;
-}
 
 async function waitFor<T>(what: string, check: () => Promise<T | null>, timeoutSecs = 180): Promise<T> {
   const until = Date.now() + timeoutSecs * 1000;
