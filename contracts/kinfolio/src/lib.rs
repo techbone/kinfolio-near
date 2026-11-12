@@ -6,9 +6,10 @@
 //! from its own state and asks the signer to sign the hashes it computed.
 
 pub mod btc;
+pub mod evm;
 
-use near_sdk::json_types::U64;
-use near_sdk::serde::{Deserialize, Serialize};
+use near_sdk::json_types::{U128, U64};
+use near_sdk::serde::Deserialize;
 use near_sdk::store::LookupMap;
 use near_sdk::{
     env, near, require, AccountId, Gas, GasWeight, NearToken, PanicOnDefault, Promise, PromiseError,
@@ -30,6 +31,14 @@ const ON_DERIVED_GAS: Gas = Gas::from_tgas(10);
 const SIGN_DEPOSIT: NearToken = NearToken::from_yoctonear(1);
 /// Domain 0 is the secp256k1 (CaitSith) signing domain on the MPC signer.
 const SECP256K1_DOMAIN: u64 = 0;
+/// Base Sepolia.
+const EVM_CHAIN_ID: u64 = 84_532;
+const MAX_EVM_GAS_LIMIT: u64 = 300_000;
+/// Caps gas_limit x max_fee_per_gas so a keeper can't burn the trust's ETH as fees (0.001 ETH).
+const MAX_EVM_FEE_WEI: u128 = 1_000_000_000_000_000;
+/// Raw storage keys outside the borsh state struct, so adding them needs no state migration.
+const SPLITTER_KEY: &[u8] = b"cfg:splitter";
+const LAST_EVM_PREFIX: &[u8] = b"evm:";
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -119,6 +128,7 @@ struct SigResponse {
     scheme: String,
     big_r: AffinePoint,
     s: Scalar,
+    recovery_id: u8,
 }
 
 #[derive(Deserialize)]
@@ -133,11 +143,21 @@ struct Scalar {
     scalar: String,
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "near_sdk::serde")]
+#[near(serializers = [json])]
 pub struct TxArgs {
     inputs: Vec<(String, u32, u64)>, // (txid display hex, vout, value)
     outputs: Vec<(u64, String)>,     // (value, script hex)
+}
+
+#[near(serializers = [json])]
+pub struct EvmTxArgs {
+    nonce: u64,
+    max_priority_fee_per_gas: U128,
+    max_fee_per_gas: U128,
+    gas_limit: u64,
+    to: String,
+    value: U128,
+    data: String,
 }
 
 #[near(contract_state)]
@@ -369,6 +389,139 @@ impl Kinfolio {
         signed
     }
 
+
+    // ---------------------------------------------------------------- distribution (after release)
+
+    /// Pays the trust's BTC to the heirs by share. Anyone may call it (the keeper does), because the
+    /// contract picks the outputs: each heir's registered address gets `bps x (inputs - fee)`, the
+    /// last heir takes the rounding remainder. Inputs the caller leaves out stay for a later call,
+    /// and lying about an input's value only produces a signature the network rejects (BIP-143).
+    pub fn distribute_btc(&mut self, id: u64, utxos: Vec<Utxo>, fee_sats: u64) -> Promise {
+        let trust = self.trust(id);
+        require!(trust.state == State::Released, "trust is not released");
+        let (key_hash, _) = Self::btc_keys(trust);
+        let payees: Vec<([u8; 20], u16)> = trust
+            .heirs
+            .iter()
+            .map(|h| {
+                let addr = h.btc_address.as_ref().unwrap_or_else(|| env::panic_str(&format!("{} has no btc payout address", h.account)));
+                (btc::decode_p2wpkh(&self.btc_hrp, addr).expect("checked on set"), h.bps)
+            })
+            .collect();
+        let mut tx = Self::build_tx(&utxos, fee_sats);
+        let total = tx.total_in();
+        require!(total > fee_sats, "inputs do not cover the fee");
+        let amounts = split_by_bps(total - fee_sats, &payees.iter().map(|p| p.1).collect::<Vec<_>>());
+        for ((hash, _), amount) in payees.iter().zip(amounts) {
+            require!(amount >= btc::DUST_SATS, "an heir's share would be dust");
+            tx.outputs.push(btc::Output { value: amount, script: btc::p2wpkh_script(hash) });
+        }
+        self.request_btc_signatures(id, tx, &key_hash, "distribute")
+    }
+
+    /// Pays the trust's ETH to the heirs through `KinfolioSplitter.split`, which divides `value_wei`
+    /// by share on-chain. The caller supplies nonce, gas and value; the contract caps the fee and
+    /// builds the calldata from its own heir list, so a lying caller can't change who gets what share.
+    pub fn distribute_evm(
+        &mut self,
+        id: u64,
+        nonce: u64,
+        max_fee_per_gas: U128,
+        max_priority_fee_per_gas: U128,
+        gas_limit: u64,
+        value_wei: U128,
+    ) -> Promise {
+        let trust = self.trust(id);
+        require!(trust.state == State::Released, "trust is not released");
+        require!(trust.pubkey.is_some(), "trust key is not derived yet");
+        require!(gas_limit > 0 && gas_limit <= MAX_EVM_GAS_LIMIT, "gas_limit out of range");
+        require!(max_priority_fee_per_gas.0 <= max_fee_per_gas.0, "priority fee above max fee");
+        require!(max_fee_per_gas.0.saturating_mul(gas_limit as u128) <= MAX_EVM_FEE_WEI, "fee above the 0.001 ETH cap");
+        require!(value_wei.0 > 0, "nothing to distribute");
+        let splitter = self.splitter().unwrap_or_else(|| env::panic_str("splitter is not configured"));
+        let (to, bps): (Vec<[u8; 20]>, Vec<u16>) = trust
+            .heirs
+            .iter()
+            .map(|h| {
+                let addr = h.evm_address.as_ref().unwrap_or_else(|| env::panic_str(&format!("{} has no evm payout address", h.account)));
+                (evm::parse_address(addr).expect("checked on set"), h.bps)
+            })
+            .unzip();
+        let tx = evm::Tx {
+            chain_id: EVM_CHAIN_ID,
+            nonce,
+            max_priority_fee_per_gas: max_priority_fee_per_gas.0,
+            max_fee_per_gas: max_fee_per_gas.0,
+            gas_limit,
+            to: splitter,
+            value: value_wei.0,
+            data: evm::split_calldata(&to, &bps),
+        };
+        let args = near_sdk::serde_json::json!({
+            "request": {
+                "path": Self::path(id),
+                "payload_v2": { "Ecdsa": hex::encode(tx.sighash()) },
+                "domain_id": SECP256K1_DOMAIN,
+            }
+        });
+        let tx_args = EvmTxArgs {
+            nonce,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
+            gas_limit,
+            to: format!("0x{}", hex::encode(tx.to)),
+            value: value_wei,
+            data: hex::encode(&tx.data),
+        };
+        Promise::new(self.signer.clone())
+            .function_call_weight("sign", args.to_string().into_bytes(), SIGN_DEPOSIT, SIGN_GAS, GasWeight(0))
+            .then(Self::ext(env::current_account_id()).with_static_gas(CALLBACK_GAS).on_evm_signed(id, tx_args))
+    }
+
+    #[private]
+    pub fn on_evm_signed(&mut self, id: u64, tx: EvmTxArgs) -> SignedTx {
+        let raw = env::promise_result_checked(0, 4096).unwrap_or_else(|_| env::panic_str("signer did not return a signature"));
+        let resp: SigResponse = near_sdk::serde_json::from_slice(&raw).expect("signature json");
+        require!(resp.scheme == "Secp256k1", "unexpected signature scheme");
+        let big_r = hex::decode(&resp.big_r.affine_point).expect("big_r hex");
+        let mut r = [0u8; 32];
+        r.copy_from_slice(&big_r[1..33]);
+        let mut s = [0u8; 32];
+        hex::decode_to_slice(&resp.s.scalar, &mut s).expect("s hex");
+        // Ethereum only accepts low-S; flipping S to N - S also flips the recovery parity.
+        let low = btc::normalize_s(s);
+        let y_parity = if low != s { resp.recovery_id ^ 1 } else { resp.recovery_id };
+        let tx = evm::Tx {
+            chain_id: EVM_CHAIN_ID,
+            nonce: tx.nonce,
+            max_priority_fee_per_gas: tx.max_priority_fee_per_gas.0,
+            max_fee_per_gas: tx.max_fee_per_gas.0,
+            gas_limit: tx.gas_limit,
+            to: evm::parse_address(&tx.to).expect("to"),
+            value: tx.value.0,
+            data: hex::decode(&tx.data).expect("data hex"),
+        };
+        let signed_bytes = tx.serialize_signed(y_parity, &r, &low);
+        let signed = SignedTx {
+            chain: "evm".into(),
+            raw_hex: format!("0x{}", hex::encode(&signed_bytes)),
+            txid: evm::tx_hash(&signed_bytes),
+            signed_at_secs: env::block_timestamp() / NS_PER_SEC,
+        };
+        env::storage_write(&evm_key(id), &near_sdk::borsh::to_vec(&signed).expect("borsh"));
+        log_event("evm_signed", &near_sdk::serde_json::json!({ "id": id, "tx_hash": signed.txid, "reason": "distribute" }));
+        signed
+    }
+
+    /// One-time setting of the Base Sepolia splitter. Only the contract account itself can call it,
+    /// and it can't be changed afterwards.
+    #[private]
+    pub fn set_splitter(&mut self, address: String) {
+        require!(self.splitter().is_none(), "splitter is already set");
+        let a = evm::parse_address(&address).unwrap_or_else(|e| env::panic_str(&e));
+        env::storage_write(SPLITTER_KEY, &a);
+    }
+
     // ---------------------------------------------------------------- views
 
     pub fn get_trust(&self, id: u64) -> Option<TrustView> {
@@ -385,6 +538,14 @@ impl Kinfolio {
 
     pub fn get_last_signed(&self, id: u64) -> Option<SignedTx> {
         self.last_signed.get(&id).cloned()
+    }
+
+    pub fn get_last_signed_evm(&self, id: u64) -> Option<SignedTx> {
+        env::storage_read(&evm_key(id)).map(|b| near_sdk::borsh::from_slice(&b).expect("borsh"))
+    }
+
+    pub fn get_splitter(&self) -> Option<String> {
+        self.splitter().map(|a| format!("0x{}", hex::encode(a)))
     }
 
     pub fn get_config(&self) -> (AccountId, String) {
@@ -409,6 +570,10 @@ impl Kinfolio {
 
     fn trust_mut(&mut self, id: u64) -> &mut Trust {
         self.trusts.get_mut(&id).unwrap_or_else(|| env::panic_str("no such trust"))
+    }
+
+    fn splitter(&self) -> Option<[u8; 20]> {
+        env::storage_read(SPLITTER_KEY).and_then(|b| b.try_into().ok())
     }
 
     fn btc_keys(trust: &Trust) -> ([u8; 20], [u8; 33]) {
@@ -524,6 +689,23 @@ impl Kinfolio {
             }
         }
     }
+}
+
+fn evm_key(id: u64) -> Vec<u8> {
+    [LAST_EVM_PREFIX, &id.to_le_bytes()].concat()
+}
+
+/// Splits `total` by basis points; the last share takes the rounding remainder.
+fn split_by_bps(total: u64, bps: &[u16]) -> Vec<u64> {
+    let mut left = total;
+    bps.iter()
+        .enumerate()
+        .map(|(i, b)| {
+            let amount = if i == bps.len() - 1 { left } else { (total as u128 * *b as u128 / 10_000) as u64 };
+            left -= amount;
+            amount
+        })
+        .collect()
 }
 
 fn tx_to_args(tx: &btc::Tx) -> TxArgs {
@@ -693,5 +875,105 @@ mod tests {
         ctx(accounts(1), T0);
         let utxo = Utxo { txid: "11".repeat(32), vout: 0, value: 1_000_000 };
         let _ = c.owner_sign_btc(0, vec![utxo], btc::address("tb", &[7u8; 20]), 10_000, 500);
+    }
+
+    fn released() -> Kinfolio {
+        let mut c = ready();
+        ctx(accounts(1), T0 + 61 * NS_PER_SEC);
+        c.start_claim(0);
+        ctx(accounts(3), T0 + 91 * NS_PER_SEC);
+        c.finalize(0);
+        c
+    }
+
+    fn register_payouts(c: &mut Kinfolio) {
+        for (i, who) in [accounts(1), accounts(2)].into_iter().enumerate() {
+            ctx(who, T0 + 92 * NS_PER_SEC);
+            c.set_payout(0, Some(btc::address("tb", &[i as u8 + 1; 20])), Some(format!("0x{}", hex::encode([i as u8 + 1; 20]))));
+        }
+    }
+
+    #[test]
+    fn shares_split_by_bps_with_remainder_to_last() {
+        assert_eq!(split_by_bps(10_001, &[6_000, 4_000]), vec![6_000, 4_001]);
+        assert_eq!(split_by_bps(49_700, &[3_333, 3_333, 3_334]).iter().sum::<u64>(), 49_700);
+    }
+
+    #[test]
+    #[should_panic(expected = "trust is not released")]
+    fn cannot_distribute_while_owner_is_alive() {
+        let mut c = ready();
+        ctx(accounts(3), T0);
+        let utxo = Utxo { txid: "11".repeat(32), vout: 0, value: 100_000 };
+        let _ = c.distribute_btc(0, vec![utxo], 500);
+    }
+
+    #[test]
+    #[should_panic(expected = "has no btc payout address")]
+    fn btc_distribution_needs_every_heir_address() {
+        let mut c = released();
+        let utxo = Utxo { txid: "11".repeat(32), vout: 0, value: 100_000 };
+        let _ = c.distribute_btc(0, vec![utxo], 500);
+    }
+
+    #[test]
+    fn released_trust_distributes_btc_and_keeps_heartbeat() {
+        let mut c = released();
+        register_payouts(&mut c);
+        let before = c.trust(0).last_heartbeat_ns;
+        let utxo = Utxo { txid: "11".repeat(32), vout: 0, value: 100_000 };
+        let _ = c.distribute_btc(0, vec![utxo], 500);
+        assert_eq!(c.trust(0).last_heartbeat_ns, before);
+    }
+
+    #[test]
+    #[should_panic(expected = "an heir's share would be dust")]
+    fn btc_distribution_refuses_dust_shares() {
+        let mut c = released();
+        register_payouts(&mut c);
+        let utxo = Utxo { txid: "11".repeat(32), vout: 0, value: 1_500 };
+        let _ = c.distribute_btc(0, vec![utxo], 500);
+    }
+
+    #[test]
+    #[should_panic(expected = "splitter is not configured")]
+    fn evm_distribution_needs_the_splitter() {
+        let mut c = released();
+        register_payouts(&mut c);
+        let _ = c.distribute_evm(0, 0, U128(1_000_000), U128(1_000), 100_000, U128(1_000_000_000));
+    }
+
+    #[test]
+    #[should_panic(expected = "fee above the 0.001 ETH cap")]
+    fn evm_fee_is_capped_by_the_contract() {
+        let mut c = released();
+        register_payouts(&mut c);
+        let _ = c.distribute_evm(0, 0, U128(10_000_000_000_000), U128(1), 300_000, U128(1));
+    }
+
+    #[test]
+    fn evm_distribution_builds_with_splitter_set() {
+        let mut c = released();
+        register_payouts(&mut c);
+        testing_env!(VMContextBuilder::new()
+            .current_account_id("contract.testnet".parse().unwrap())
+            .predecessor_account_id("contract.testnet".parse().unwrap())
+            .block_timestamp(T0 + 93 * NS_PER_SEC)
+            .build());
+        c.set_splitter(format!("0x{}", "ab".repeat(20)));
+        assert_eq!(c.get_splitter().unwrap(), format!("0x{}", "ab".repeat(20)));
+        let _ = c.distribute_evm(0, 0, U128(1_000_000), U128(1_000), 100_000, U128(1_000_000_000));
+    }
+
+    #[test]
+    #[should_panic(expected = "splitter is already set")]
+    fn splitter_can_only_be_set_once() {
+        let mut c = ready();
+        testing_env!(VMContextBuilder::new()
+            .current_account_id("contract.testnet".parse().unwrap())
+            .predecessor_account_id("contract.testnet".parse().unwrap())
+            .build());
+        c.set_splitter(format!("0x{}", "ab".repeat(20)));
+        c.set_splitter(format!("0x{}", "cd".repeat(20)));
     }
 }
