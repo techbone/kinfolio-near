@@ -1,15 +1,26 @@
-import { CONTRACT_ID, NEAR_RPC } from "./config";
+import { CONTRACT_ID, NEAR_RPC, NEAR_RPC_FALLBACK } from "./config";
 import type { SignedTx, Trust } from "./types";
 
+/** JSON-RPC to NEAR. Moves to the fallback provider on network errors and rate limits only. */
 async function rpc<T>(method: string, params: unknown): Promise<T> {
-  const res = await fetch(NEAR_RPC, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: "kinfolio", method, params }),
-  });
-  const body = await res.json();
-  if (body.error) throw new Error(body.error.data ?? body.error.message ?? "NEAR RPC error");
-  return body.result as T;
+  let last: unknown;
+  for (const url of [NEAR_RPC, NEAR_RPC_FALLBACK]) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "kinfolio", method, params }),
+      });
+      if (res.status === 429 || res.status >= 500) throw new Error(`NEAR RPC ${res.status}`);
+      const body = await res.json();
+      if (body.error?.code === -429) throw new Error("NEAR RPC rate limited");
+      if (body.error) return Promise.reject(new Error(body.error.data ?? body.error.message ?? "NEAR RPC error"));
+      return body.result as T;
+    } catch (e) {
+      last = e;
+    }
+  }
+  throw last;
 }
 
 export async function view<T>(method: string, args: Record<string, unknown> = {}): Promise<T> {

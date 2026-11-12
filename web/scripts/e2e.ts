@@ -21,17 +21,17 @@ import * as evm from "../lib/evm";
 import type { SignedTx } from "../lib/types";
 
 const ROOT = path.resolve(__dirname, "../..");
-const env = loadEnv(path.join(ROOT, ".env"));
+const env: Record<string, string> = { ...loadEnv(path.join(ROOT, ".env")), ...(process.env as Record<string, string>) };
 
 const OWNER = "kinfolio-musa.testnet";
 const HEIR_A = "heir-a.kinfolio-musa.testnet";
 const HEIR_B = "heir-b.kinfolio-musa.testnet";
 const FUND_FROM_TRUST = Number(env.E2E_FUND_FROM_TRUST ?? 0);
-const FUND_SATS = 12_000;
+const FUND_SATS = Number(env.E2E_FUND_SATS ?? 12_000);
 const FUND_WEI = BigInt(env.E2E_FUND_WEI ?? "2000000000000000"); // 0.002 ETH
 const INACTIVITY_SECS = 20;
 const CHALLENGE_SECS = 15;
-const GAS_300 =300_000_000_000_000n;
+const GAS_300 = 300_000_000_000_000n;
 const GAS_100 = 100_000_000_000_000n;
 
 const log: string[] = [];
