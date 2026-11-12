@@ -37,3 +37,6 @@ Each time the rails or our code surprise us: the dead end, the path chosen and t
 - Surprise: adding fields to the borsh state struct would break the deployed contract. The splitter address and EVM signatures live under raw storage keys instead, so the redeploy kept trust 0 and its coins.
 - Surprise: mempool.space was unreachable from the build machine for hours. The BTC helpers now fall back to Blockstream's testnet4 Esplora (`/fee-estimates` instead of `/v1/fees/recommended`).
 - Evidence: `docs/evidence/e2e-2026-11-12-09-31.txt` (BTC half; EVM half waits on Base Sepolia ETH).
+- Splitter deployed on Base Sepolia at `0xae3a286351dac27a3ee6662296629538ec1d3f08` (tx `0x8df08a0f…f171`), then locked into the NEAR contract with the one-time `set_splitter` (NEAR tx `5fw1bCyY…gbFH`).
+- Surprise: Base is an OP-stack L2, so every tx also pays an L1 data fee. Sending `balance - gas` failed with "want 2000000000000261". The e2e now reserves `GasPriceOracle.getL1FeeUpperBound(800)` (predeploy `0x42…0F`). The leftover wei stays in the trust.
+- Evidence: `docs/evidence/e2e-2026-11-12-10-44.txt`, the first full run with both chains paid (trust 4).

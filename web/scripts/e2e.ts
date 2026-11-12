@@ -30,7 +30,9 @@ const FUND_SATS = 12_000;
 const FUND_WEI = BigInt(env.E2E_FUND_WEI ?? "2000000000000000"); // 0.002 ETH
 const INACTIVITY_SECS = 20;
 const CHALLENGE_SECS = 15;
-const GAS_300 = 300_000_000_000_000n;
+/** OP-stack GasPriceOracle predeploy; `getL1FeeUpperBound(uint256)` is selector 0xf1c7a58b. */
+const L1_FEE_ORACLE = "0x420000000000000000000000000000000000000F";
+const GAS_300 =300_000_000_000_000n;
 const GAS_100 = 100_000_000_000_000n;
 
 const log: string[] = [];
@@ -130,7 +132,10 @@ async function main() {
     const prio = 1_000_000n; // 0.001 gwei
     const maxFee = base * 2n + prio;
     const gasLimit = 120_000n;
-    const value = balance - gasLimit * maxFee;
+    // Base is an OP-stack L2: on top of L2 gas, every tx pays an L1 data fee. Reserve the oracle's
+    // upper bound for a generously sized tx so the balance check passes.
+    const l1Fee = BigInt(await evmRpc<string>("eth_call", [{ to: L1_FEE_ORACLE, data: `0xf1c7a58b${(800).toString(16).padStart(64, "0")}` }, "latest"]));
+    const value = balance - gasLimit * maxFee - l1Fee;
     const before = [await evmBalanceWei(BASE_RPC, must("E2E_HEIR_A_EVM")), await evmBalanceWei(BASE_RPC, must("E2E_HEIR_B_EVM"))];
     const signed = await call<SignedTx>(
       heirA,
