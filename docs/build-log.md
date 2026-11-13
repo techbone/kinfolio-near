@@ -40,3 +40,8 @@ Each time the rails or our code surprise us: the dead end, the path chosen and t
 - Splitter deployed on Base Sepolia at `0xae3a286351dac27a3ee6662296629538ec1d3f08` (tx `0x8df08a0f…f171`), then locked into the NEAR contract with the one-time `set_splitter` (NEAR tx `5fw1bCyY…gbFH`).
 - Surprise: Base is an OP-stack L2, so every tx also pays an L1 data fee. Sending `balance - gas` failed with "want 2000000000000261". The e2e now reserves `GasPriceOracle.getL1FeeUpperBound(800)` (predeploy `0x42…0F`). The leftover wei stays in the trust.
 - Evidence: `docs/evidence/e2e-2026-11-12-10-44.txt`, the first full run with both chains paid (trust 4).
+
+## Ship (13 Nov)
+
+- Surprise: `rpc.testnet.near.org` started answering `-429 "THIS ENDPOINT IS DEPRECATED"` mid-run (trust 5 was created, then the next call failed). The app and the e2e now use FastNEAR (`test.rpc.fastnear.com`) and move to dRPC (`near-testnet.drpc.org`) only on network errors or rate limits; contract errors are never retried elsewhere. Both are listed at docs.near.org/api/rpc/providers.
+- Guard: the e2e itself. `docs/evidence/e2e-2026-11-13-00-02.txt` is a clean rerun on the new RPC (trust 6, both chains paid, 143 s), and it is the run in the demo video.

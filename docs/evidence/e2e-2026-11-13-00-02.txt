@@ -1,0 +1,43 @@
+== Setup
+   contract app.kinfolio-musa.testnet
+   owner kinfolio-musa.testnet
+   heirs heir-a.kinfolio-musa.testnet (60%), heir-b.kinfolio-musa.testnet (40%)
+   started 2026-11-13T00:02:25.795Z
+
+== 1. create_trust
+   trust 6
+   BTC tb1qpjcj9cmzv8cu3qjnw74kw20j69lk6k97uh94f3
+   EVM 0xf55d8eea597f92078abf890feda08995b7ce6cf9
+   inactivity 20s, challenge 15s
+
+== 2. fund BTC
+   owner_sign_btc on trust 0 -> 9000 sats
+   https://mempool.space/testnet4/tx/269fe65f2162a83a4421d9c86b2b3c7d153944f4ad0e2a132885d8b9a5e6a203
+
+== 3. fund ETH
+   2000000000000000 wei from deployer
+   https://sepolia.basescan.org/tx/0xa212a13eaaaf95d56af2b310d7bb5f53aa4e8dbb83e704fdeebaf299b0e2cbab
+
+== 4. start_claim
+   heir-a.kinfolio-musa.testnet started a claim
+   state Challenge, finalizable after 2026-11-13T00:03:47.000Z
+
+== 5. finalize
+   state Released
+
+== 6. distribute_btc
+   inputs 9000 sats, fee 341
+   heir-a.kinfolio-musa.testnet <- 5195 sats (tb1qxm0e9swapwyfh7mz6klfgdcejg0u7fpfx6uggj)
+   heir-b.kinfolio-musa.testnet <- 3464 sats (tb1q6vu0wmjejgmz56nwqnwfm4v2qp7crytrmskqkz)
+   https://mempool.space/testnet4/tx/e3bc1618b16df5291a063dc57dcedcb74c57b0bbadb7e8cc6cf0165a03d827cb
+
+== 7. distribute_evm
+   value 1998364527439354 wei through splitter 0xae3a286351dac27a3ee6662296629538ec1d3f08
+   heir-a.kinfolio-musa.testnet <- 1199018716463612 wei
+   heir-b.kinfolio-musa.testnet <- 799345810975742 wei
+   https://sepolia.basescan.org/tx/0xc2e2b258c67d0c6ed17619a958ada9d54ffbad892d89fa77f9b866fe90a5bcfd
+
+== Done
+   trust 6 released and paid out
+   NEAR account: https://explorer.testnet.near.org/accounts/app.kinfolio-musa.testnet
+   took 143s
