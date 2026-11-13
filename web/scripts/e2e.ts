@@ -23,9 +23,9 @@ import type { SignedTx } from "../lib/types";
 const ROOT = path.resolve(__dirname, "../..");
 const env: Record<string, string> = { ...loadEnv(path.join(ROOT, ".env")), ...(process.env as Record<string, string>) };
 
-const OWNER = "kinfolio-musa.testnet";
-const HEIR_A = "heir-a.kinfolio-musa.testnet";
-const HEIR_B = "heir-b.kinfolio-musa.testnet";
+const OWNER = env.E2E_OWNER ?? "kinfolio-musa.testnet";
+const HEIR_A = env.E2E_HEIR_A ?? "heir-a.kinfolio-musa.testnet";
+const HEIR_B = env.E2E_HEIR_B ?? "heir-b.kinfolio-musa.testnet";
 const FUND_FROM_TRUST = Number(env.E2E_FUND_FROM_TRUST ?? 0);
 const FUND_SATS = Number(env.E2E_FUND_SATS ?? 12_000);
 const FUND_WEI = BigInt(env.E2E_FUND_WEI ?? "2000000000000000"); // 0.002 ETH
