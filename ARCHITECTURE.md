@@ -1,132 +1,117 @@
 # Kinfolio on NEAR: Architecture
 
+This describes what is built and deployed. What was planned and cut is listed at the end and in the README's honesty table.
+
 ## Pitch
 
-Kinfolio is a family trust for self-custodied crypto. A NEAR contract holds native BTC and ETH at addresses it controls through Chain Signatures. If the owner stops using the money for longer than they chose, their heirs can start a claim. The owner can veto it during a challenge window. After that, the contract itself signs the transactions that pay each heir their share. No company holds a key, and nothing is wrapped or bridged.
+Kinfolio is a family trust for self-custodied crypto. A NEAR contract holds native BTC and ETH at an address it controls through Chain Signatures. If the owner goes quiet for longer than they chose, an heir can start a claim, and the owner can veto it during a challenge window. After that, the contract itself builds the transactions that pay each heir their share, and the MPC network signs them. No company holds a key, and nothing is wrapped or bridged.
 
 **Thesis:** *Your keys outlive you, and no company ever holds them.*
 
-**Why this beats the Open Innovation example prompt** (which is also an inheritance account):
+What makes it different from a plain inheritance account:
 
-1. **Spending is proof of life.** The owner spends through the trust, and every signature resets the inactivity timer. There's no "I'm alive" button to forget.
-2. **The contract decides who gets paid, not the keeper.** It builds the Bitcoin and EVM transactions itself, and the caller only supplies inputs. A lying caller can at worst produce a transaction that the network rejects. See "The hard problem" below.
-3. **Heirs need nothing.** They don't need NEAR, gas or a wallet app. Heir actions are gasless meta-transactions, and an heir can ask to be paid in another token on another chain through NEAR Intents.
+1. **Spending is proof of life.** The owner can spend through the trust (`owner_sign_btc`), and every signature resets the inactivity timer. There is also a plain `heartbeat`.
+2. **The contract decides who gets paid, not the caller.** It builds the Bitcoin and EVM transactions from its own heir list. The caller only supplies inputs and a capped fee, so anyone can press "Pay heirs". See "The hard problem" below.
 
 ## Problem
 
 | | |
 |---|---|
-| **Who** | Someone holding their own BTC/ETH (a "not your keys, not your coins" saver) who has a family. |
-| **Workaround today** | (a) A seed phrase in a drawer or with a lawyer: the heir gets everything at once, or anyone who finds it steals it. (b) Collaborative custody (Casa, Unchained, Nunchuk): a company holds one key in a 2-of-3. (c) Nothing, which is the most common case. |
-| **Cost** | QuadrigaCX: about C$190M lost when the only keyholder died (2019). Chainalysis has estimated around 20% of mined BTC as lost or stranded. *(To be cited with links in the README.)* |
-| **Sponsor removal test** | Take Chain Signatures away and the trust can't hold native BTC. You're back to a custodian key or a wrapped token, which is exactly the trust problem we're removing. |
+| **Who** | Someone holding their own BTC/ETH who has a family. |
+| **Workaround today** | (a) A seed phrase in a drawer or with a lawyer: the heir gets everything at once, or whoever finds it takes it. (b) Collaborative custody (Casa, Unchained, Nunchuk): a company holds one key in a 2-of-3. (c) Nothing, which is the most common case. |
+| **Cost** | QuadrigaCX: about C$190M lost when the only keyholder died (2019). Chainalysis has estimated around 20% of mined BTC as lost or stranded (sources in the README). |
+| **Sponsor removal test** | Take Chain Signatures away and the trust can't hold native BTC. You're back to a custodian key or a wrapped token, which is exactly the trust problem being removed. |
 
 ## Capability map
 
 | User flow | NEAR capability | Exact call |
 |---|---|---|
-| Create trust and show its BTC/ETH addresses | Chain Signatures key derivation | `v1.signer-prod.testnet.derived_public_key({path, predecessor, domain_id: 0})`, with `path = "<trust_id>/btc"` or `"<trust_id>/evm"` and `predecessor` = our contract |
-| Owner spends while alive (heartbeat) | Chain Signatures signing | `kinfolio.owner_sign(trust_id, chain, payload)` → `v1.signer-prod.testnet.sign({request:{path, payload_v2:{Ecdsa:hex}, domain_id:0}})`, 1 yocto deposit, ≥15 Tgas, resolved via yield/resume |
-| Heir starts claim → owner vetoes or window passes → released | Plain contract state machine | `start_claim`, `veto`, `finalize` |
-| Distribute BTC to heirs | In-contract tx construction plus Chain Signatures | `distribute_btc(trust_id, utxos, fee_sats)`: builds a P2WPKH tx with `omni-transaction-rs`, computes the BIP-143 sighash, then calls `sign` once per input |
-| Distribute ETH to heirs | Same, EVM | `distribute_evm(trust_id, nonce, max_fee, balance_wei)`: builds an EIP-1559 tx calling `KinfolioSplitter.split(heirs, bps)` and signs it |
-| Heir registers payout address, gasless | Meta transactions (NEP-366) | Heir signs a `SignedDelegateAction`, and our relayer submits it. It only relays calls to `kinfolio.*` |
-| Heir is paid in another token or chain | NEAR Intents 1Click | Heir's payout address = a 1Click deposit address from `POST /v0/quote`. **Mainnet only** (Intents has no testnet) |
-| *(Stretch)* Proof of life from everyday wallet | MPC foreign-tx verification | `v1.signer-prod.testnet.verify_foreign_transaction` on Base: an ERC-20 `Transfer` log with `from = owner` resets the timer, attested by the MPC network instead of an oracle |
+| Create a trust and show its BTC/ETH addresses | Chain Signatures key derivation | `create_trust` calls `v1.signer-prod.testnet.derived_public_key({path: "trust-{id}", predecessor: <contract>, domain_id: 0})`; `on_derived` stores the key. One secp256k1 key per trust gives both the P2WPKH and the 0x address |
+| Owner spends while alive (resets the timer) | Chain Signatures signing | `owner_sign_btc(id, utxos, to, amount_sats, fee_sats)` → `sign({request:{path, payload_v2:{Ecdsa:hex}, domain_id:0}})` per input, 1 yocto, resolved via yield/resume into `on_btc_signed` |
+| Heir claims → owner vetoes or the window passes → released | Contract state machine | `start_claim`, `veto`, `finalize`; `heartbeat` for the owner |
+| Pay heirs in BTC | In-contract tx construction plus signing | `distribute_btc(id, utxos, fee_sats)`: builds a BIP-143 P2WPKH tx with one output per heir (plus change), signs each input, stores the raw tx for broadcast |
+| Pay heirs in ETH | Same, EVM | `distribute_evm(...)`: builds an EIP-1559 tx calling `KinfolioSplitter.split(heirs, bps)` on Base Sepolia, signs it, stores the raw tx |
 
-Verified live on 2026-11-02: the testnet signer `v1.signer-prod.testnet` runs v3.18.0. It has domains 0 (secp256k1 Sign), 1 (ed25519 Sign) and 3 (ForeignTx). Its foreign-chain verification on testnet covers Solana, Base, Arbitrum, Polygon, BNB and others. Bitcoin verification is **mainnet only**.
+Verified live on 2026-11-02: `v1.signer-prod.testnet` runs v3.18.0 with domain 0 (secp256k1).
 
 ## System overview
 
 ```mermaid
 flowchart LR
   subgraph Web["Web app (Next.js, Vercel)"]
-    UI[Owner and heir UI]
-    Relay["/api/relay<br/>meta-tx relayer"]
-    Keeper["/api/keeper<br/>UTXOs, nonce, broadcast"]
+    UI[Owner and heir UI<br/>near-connect wallet]
   end
   subgraph NEAR["NEAR testnet"]
-    K["kinfolio contract<br/>(Rust, near-sdk)"]
+    K["app.kinfolio-musa.testnet<br/>(Rust, near-sdk)"]
     MPC["v1.signer-prod.testnet<br/>MPC signer"]
   end
   BTC[(Bitcoin testnet4)]
-  EVM[(Base Sepolia<br/>+ KinfolioSplitter)]
-  OneClick[(NEAR Intents 1Click<br/>mainnet)]
+  EVM[(Base Sepolia<br/>KinfolioSplitter)]
 
-  UI -- wallet tx --> K
-  UI -- signed delegate --> Relay -- relays --> K
-  Keeper -- distribute_* --> K
-  K -- sign / yield-resume --> MPC
-  Keeper -- broadcast signed tx --> BTC
-  Keeper -- broadcast signed tx --> EVM
-  UI -- quote for heir payout --> OneClick
-  Keeper -. reads UTXOs / balances .-> BTC & EVM
+  UI -- create / heartbeat / claim / veto / distribute --> K
+  K -- sign, yield-resume --> MPC
+  UI -. reads UTXOs, nonce, fees .-> BTC & EVM
+  UI -- broadcasts the contract's signed tx --> BTC
+  UI -- broadcasts the contract's signed tx --> EVM
 ```
+
+There is no backend. The browser (or `pnpm e2e`) reads chain state, calls the contract, then broadcasts the raw transaction the contract signed. It can't change who gets paid, because the contract built the transaction.
 
 ## Components
 
-- **`contracts/kinfolio`** (Rust, near-sdk 5.x, built with `cargo-near`). One contract, many trusts, keyed by `trust_id`. Each trust's foreign addresses come from the path `"{trust_id}/{chain}"` under the contract's account. After deploy we delete the full-access key so the contract can't be changed (an honesty-table item until we do).
-- **`contracts/splitter`** (Solidity, Foundry). `KinfolioSplitter.split(address[] to, uint16[] bps)` is payable and splits `msg.value` by bps on-chain. Deployed once on Base Sepolia.
-- **`web`** (Next.js App Router, TypeScript, Tailwind). The wallet is `@hot-labs/near-connect`. Foreign-chain helpers use `chainsig.js` (address derivation, UTXO fetch, broadcast). The route handlers are the relayer and the keeper.
-- **`scripts/e2e.ts`** runs the full flow headless against testnet using the same modules as the web app. Its output is saved to `docs/evidence/`.
+- **`contracts/kinfolio`** (Rust, near-sdk 5.30). One contract, many trusts keyed by id. Bitcoin and EVM serialization is hand-rolled in `btc.rs` and `evm.rs` (with `bech32`, `ripemd`, `sha2`) and tested byte-for-byte against `rust-bitcoin` and Foundry.
+- **`contracts/splitter`** (Solidity, Foundry). `KinfolioSplitter.split(address[] to, uint16[] bps)` is payable and splits `msg.value` on-chain. Deployed at `0xae3a286351dac27a3ee6662296629538ec1d3f08` on Base Sepolia.
+- **`web`** (Next.js 16, React 19, Tailwind 4). Wallet via `@hot-labs/near-connect`. `lib/btc.ts` and `lib/evm.ts` fetch inputs and broadcast; `lib/near.ts` talks to the contract through FastNEAR with a dRPC fallback.
+- **`web/scripts/e2e.ts`** runs the whole flow headless against the real rails, using the same modules as the app. Output goes to `docs/evidence/`.
 
 ## Data model (contract)
 
 ```rust
 Trust {
   owner: AccountId,
-  state: Active | Challenge | Released | Closed,
-  inactivity_secs: u32,       // demo: 120
-  challenge_secs: u32,        // demo: 60
-  last_heartbeat: u64,        // ns; bumped by owner_sign, heartbeat, (stretch) verified foreign activity
-  claim_started_at: Option<u64>,
+  state: Active | Challenge | Released,
+  inactivity_secs: u32,
+  challenge_secs: u32,
+  last_heartbeat_ns: u64,        // bumped by heartbeat and owner_sign_btc
+  claim_started_ns: Option<u64>,
   claimant: Option<AccountId>,
-  heirs: Vec<Heir>,           // bps must total 10_000
-  distributions: Vec<DistributionRecord>, // per chain: tx hash placeholder, amount, at
+  heirs: Vec<Heir>,              // bps total 10_000
+  pubkey: Option<Vec<u8>>,       // derived key, None while the signer answers
 }
-Heir { account: AccountId, bps: u16, payout: Map<Chain, String> } // BTC bech32 / 0x address / 1Click deposit address
-Chain = Btc | Evm
+Heir { account: AccountId, bps: u16, btc_address: Option<String>, evm_address: Option<String> }
 ```
 
-Out of Kinfolio's EVM design for now: cash/portfolio sleeves, per-grant vesting, and grant transfer.
+## Key flow (the demo)
 
-## Key flows (the demo)
-
-1. **Create and fund.** The owner creates a trust (2 heirs, 60/40, 2-minute inactivity, 1-minute challenge). The UI shows the trust's BTC testnet4 and Base Sepolia addresses, and the owner funds them from faucets.
-2. **Alive.** The owner sends 1,000 sats out through `owner_sign`. The heartbeat on the trust's timeline resets, and the mempool link proves the tx.
-3. **Gone.** No activity for 2 minutes. The heir taps "Start claim" (gasless). A countdown runs and the owner could veto. After 1 minute: `finalize`, then `distribute_btc` and `distribute_evm`. Both heirs receive 60/40 on testnet4 and Base Sepolia, with explorer links, and every step is named in the UI.
-4. **Mainnet proof (Intents).** On mainnet with about $5: an heir's ETH share on Base goes to a 1Click deposit address and arrives as USDC on NEAR, with the status polled until `SUCCESS`.
+1. **Create and fund.** The owner creates a trust with two heirs at 60/40 and short demo timers. The page shows the trust's testnet4 and Base Sepolia addresses. The e2e funds them with an MPC-signed BTC spend and a real ETH transfer.
+2. **Gone.** The owner goes quiet past the inactivity window. An heir starts a claim; the owner could veto. Once the challenge window passes, `finalize` releases the trust.
+3. **Paid.** Anyone calls `distribute_btc` and `distribute_evm`. Both heirs receive 60/40 on testnet4 and Base Sepolia, and the UI shows each step (Build → Sign (MPC) → Broadcast → Confirmed) with explorer links.
 
 ## The hard problem: whoever builds the transaction picks the recipient
 
-The obvious design has the keeper build the BTC tx off-chain and ask the contract to "sign this hash". The contract can't see what a hash pays, so a malicious keeper (or a bug) could have the trust sign a payment to anyone.
+The obvious design has an off-chain service build the BTC tx and ask the contract to "sign this hash". The contract can't see what a hash pays, so a malicious service (or a bug) could have the trust sign a payment to anyone.
 
-What we do instead: the contract builds the transaction from its own state. The caller only supplies the UTXOs (txid, vout, value) and a fee, and the fee is capped by the contract. The outputs are the heirs' registered addresses, `bps × (Σinputs − fee)`, plus change back to the trust address. We can trust caller-supplied input values because the BIP-143 segwit sighash commits to each input's amount. If the keeper lies about a value, the signature is invalid and the network rejects the tx. If it leaves UTXOs out, they stay in the trust for the next distribution.
+Instead, the contract builds the transaction from its own state. The caller only supplies the UTXOs (txid, vout, value) and a fee, capped at 50,000 sats. The outputs are the heirs' addresses, `bps × (Σinputs − fee)`, plus change back to the trust. Caller-supplied input values are safe because the BIP-143 sighash commits to each input's amount: a wrong value gives an invalid signature and the network rejects the tx. UTXOs left out stay in the trust for the next payout.
 
-On EVM, a transaction commits to `value` but not to the sender's balance. So the split happens on-chain in `KinfolioSplitter`, and a lying `balance_wei` only changes the total sent, never the ratio.
-
-A test guards each case: tampered input value → invalid sig, and wrong heir set → contract panics.
+On EVM, a transaction commits to `value` but not to the sender's balance. So the split happens on-chain in `KinfolioSplitter`, and a wrong balance only changes the total sent, never the ratio. Gas × max fee is capped at 0.001 ETH.
 
 ## Stack choices
 
 | Choice | Why |
 |---|---|
-| Rust contract, not near-sdk-js | `omni-transaction-rs` (building BTC and EVM transactions in the contract) is Rust only |
-| One contract with per-trust paths, not a sub-account per trust | Lower storage and deploy cost; the derived addresses stay just as isolated |
-| Testnet for signing, mainnet only for Intents | Intents has no testnet. HACKATHON.md allows mainnet where an integration is mainnet only |
-| Base Sepolia over Ethereum Sepolia | Cheap, and it's a foreign chain the MPC network can verify on testnet (the stretch goal) |
-| Bitcoin testnet4 | What chainsig.js and mempool.space currently support for testing |
+| Rust contract | Transaction building and hashing in the contract; the tests compare against `rust-bitcoin` and Foundry |
+| One contract with per-trust paths, not a sub-account per trust | Lower storage and deploy cost; derived addresses are just as isolated |
+| Testnet only | Chain Signatures signing works on testnet; no mainnet funds needed to judge |
+| Base Sepolia | Cheap EVM testnet with good explorers |
+| Bitcoin testnet4 | Current Bitcoin test network, supported by Blockstream and mempool.space |
 
-## Out of scope
+## Planned and cut
 
-Vesting schedules, ERC-20s other than the stretch goal, guardian sets, sleeves, Solana, mobile, legal documents, fiat off-ramp.
+| Item | Why it was cut |
+|---|---|
+| Gasless heir actions (NEP-366 relayer) | Time. Heirs currently need a testnet wallet with a little gas |
+| Heir paid in another token via NEAR Intents 1Click | Intents is mainnet only and the build stayed on testnet |
+| Proof of life from a Base transfer via MPC foreign-tx verification | Time |
+| Removing the contract's full-access key | Kept so fixes could ship during the hackathon; disclosed in the README |
 
-## Milestones (deadline 14 Nov 23:59 UTC)
-
-| # | Days | Ships | Done when |
-|---|---|---|---|
-| M1 | 2–4 Nov | Contract (create, heartbeat, `owner_sign`, state machine) on testnet; web app showing the trust and derived addresses, live on Vercel | The owner signs a real testnet4 BTC spend from the UI, and the heartbeat resets on-chain |
-| M2 | 5–7 Nov | `distribute_btc` and `distribute_evm` built in-contract, the splitter deployed, keeper, `npm run e2e` | Headless e2e: create → fund → lapse → claim → finalize → both heirs paid; log in `docs/evidence/` |
-| M3 | 8–9 Nov | Gasless heir actions (relayer), heir view, demo mode ("Reset & launch demo"), 1Click payout on mainnet | An heir with no NEAR balance completes a claim; a mainnet 1Click payout reaches `SUCCESS` |
-| M4 | 10 Nov | *(stretch)* MPC-verified proof of life from Base | A Base Sepolia USDC transfer by the owner resets the timer through `verify_foreign_transaction` |
-| Ship | 11–13 Nov | README, demo video, X post, submission | Submitted with a day to spare |
+Out of scope: vesting, ERC-20s, guardian sets, Solana, mobile, legal documents, fiat off-ramp.
