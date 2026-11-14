@@ -5,8 +5,7 @@
 - **Team size:** 1
 - **Repository:** https://github.com/techbone/kinfolio-near
 - **Live app:** https://kinfolio-near.vercel.app
-- **Demo post:** _TODO (X post link)_
-- **NEAR wallet (mainnet payout):** _TODO_
+- **Demo video:** https://github.com/techbone/kinfolio-near/blob/main/docs/kinfolio-demo.mp4
 
 ## What did you build? (20–2,000 chars)
 
