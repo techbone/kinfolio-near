@@ -10,7 +10,7 @@ Kinfolio is a family trust for self-custodied crypto. A NEAR contract holds **na
 
 ## Demo
 
-_Video: link added with the submission post._ It is a real recording of [trust 6](https://kinfolio-near.vercel.app/trust/6) going from created to paid out while `pnpm e2e` drove it against NEAR testnet, Bitcoin testnet4 and Base Sepolia. Sped-up parts are labelled on screen. Shot list: [docs/demo-script.md](docs/demo-script.md).
+**[Watch the demo (1:48)](docs/kinfolio-demo.mp4)**. It is a real recording of [trust 6](https://kinfolio-near.vercel.app/trust/6) going from created to paid out while `pnpm e2e` drove it against NEAR testnet, Bitcoin testnet4 and Base Sepolia. Sped-up parts are labelled on screen. Shot list: [docs/demo-script.md](docs/demo-script.md).
 
 ## Verify it yourself in 60 seconds
 
